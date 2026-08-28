@@ -1,8 +1,9 @@
 from flask import Blueprint, request, jsonify
 from app import db
-from app.models import Order, OrderItem, Product
+from app.models import Order, OrderItem, Product, Sale, Transaction
 from app.utils import require_role
 from flask_jwt_extended import jwt_required, get_jwt, get_jwt_identity
+from app.routes.sale_routes import generate_invoice_number
 
 order_bp = Blueprint("orders", __name__, url_prefix="/api/v1/orders")
 
@@ -148,6 +149,36 @@ def update_order_status(order_id):
         return jsonify({"error": f"status must be one of {valid_statuses}"}), 400
 
     order.status = new_status
+
+    if new_status == "fulfilled" and not order.sale:
+        tax_amount = data.get("tax_amount", 0)
+        discount_amount = data.get("discount_amount", 0)
+        payment_method = data.get("payment_method", "cash")
+
+        new_sale = Sale(
+            order_id=order.id,
+            invoice_number=generate_invoice_number()
+        )
+        db.session.add(new_sale)
+        db.session.flush()
+
+        final_amount = float(order.total_amount) + float(tax_amount) - float(discount_amount)
+
+        new_transaction = Transaction(
+            sale_id=new_sale.id,
+            tax_amount=tax_amount,
+            discount_amount=discount_amount,
+            payment_method=payment_method,
+            paid_amount=final_amount,
+            status="completed"
+        )
+        db.session.add(new_transaction)
+
     db.session.commit()
 
-    return jsonify({"message": "Order status updated", "id": order.id, "status": order.status}), 200
+    response = {"message": "Order status updated", "id": order.id, "status": order.status}
+
+    if new_status == "fulfilled" and order.sale:
+        response["invoice_number"] = order.sale.invoice_number
+
+    return jsonify(response), 200

@@ -62,7 +62,7 @@ class Sale(db.Model):
     invoice_number = db.Column(db.String(50), unique=True, nullable=False)
     sale_date = db.Column(db.DateTime, default=datetime.utcnow)
 
-    order = db.relationship("Order", backref="sale", uselist=False)
+    order = db.relationship("Order", backref=db.backref("sale", uselist=False))
 
 
 class Transaction(db.Model):
@@ -75,7 +75,7 @@ class Transaction(db.Model):
     paid_amount = db.Column(db.Numeric(10, 2), nullable=False, default=0)
     status = db.Column(db.String(50), nullable=False, default="pending")
 
-    sale = db.relationship("Sale", backref="transaction", uselist=False)
+    sale = db.relationship("Sale", backref=db.backref("transaction", uselist=False))
 
 
 class Supplier(db.Model):

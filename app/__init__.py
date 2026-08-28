@@ -26,6 +26,10 @@ def create_app():
     from app.routes.category_routes import category_bp
     from app.routes.product_routes import product_bp
     from app.routes.order_routes import order_bp
+    from app.routes.sale_routes import sale_bp
+# ... with your other blueprint imports
+
+    app.register_blueprint(sale_bp)
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(category_bp)
