@@ -25,10 +25,12 @@ def create_app():
     from app.routes.auth_routes import auth_bp
     from app.routes.category_routes import category_bp
     from app.routes.product_routes import product_bp
+    from app.routes.order_routes import order_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(category_bp)
     app.register_blueprint(product_bp)
+    app.register_blueprint(order_bp)
 
     @app.route("/api/v1/ping")
     def ping():
