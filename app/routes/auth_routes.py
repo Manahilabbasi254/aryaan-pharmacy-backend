@@ -1,14 +1,14 @@
 from flask import Blueprint, request, jsonify
 from app import db
 from app.models import User
-from flask_jwt_extended import create_access_token, get_jwt, jwt_required
+from flask_jwt_extended import create_access_token, jwt_required, get_jwt
 import bcrypt
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/v1/auth")
 
+
 @auth_bp.route("/register", methods=["POST"])
 def register():
-    
     data = request.get_json()
 
     name = data.get("name")
@@ -31,7 +31,15 @@ def register():
         password_hash=hashed_password.decode("utf-8"),
         role=role
     )
-    from flask_jwt_extended import create_access_token
+
+    db.session.add(new_user)
+    db.session.commit()
+
+    return jsonify({
+        "message": "User registered successfully",
+        "user": {"id": new_user.id, "name": new_user.name, "email": new_user.email, "role": new_user.role}
+    }), 201
+
 
 @auth_bp.route("/login", methods=["POST"])
 def login():
@@ -52,7 +60,13 @@ def login():
         identity=str(user.id),
         additional_claims={"role": user.role, "name": user.name}
     )
-    from flask_jwt_extended import jwt_required, get_jwt
+
+    return jsonify({
+        "message": "Login successful",
+        "access_token": access_token,
+        "user": {"id": user.id, "name": user.name, "email": user.email, "role": user.role}
+    }), 200
+
 
 @auth_bp.route("/me", methods=["GET"])
 @jwt_required()
@@ -63,17 +77,3 @@ def me():
         "role": claims.get("role"),
         "name": claims.get("name")
     }), 200
-
-    return jsonify({
-        "message": "Login successful",
-        "access_token": access_token,
-        "user": {"id": user.id, "name": user.name, "email": user.email, "role": user.role}
-    }), 200
-
-    db.session.add(new_user)
-    db.session.commit()
-
-    return jsonify({
-        "message": "User registered successfully",
-        "user": {"id": new_user.id, "name": new_user.name, "email": new_user.email, "role": new_user.role}
-    }), 201
