@@ -31,6 +31,8 @@ def create_app():
     from app.routes.sale_routes import sale_bp
 # ... with your other blueprint imports
     from app.routes.report_routes import report_bp
+    from app.routes.supplier_routes import supplier_bp
+    app.register_blueprint(supplier_bp)
     app.register_blueprint(report_bp) 
     app.register_blueprint(sale_bp)
     app.register_blueprint(notification_bp)
