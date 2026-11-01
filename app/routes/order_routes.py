@@ -1,3 +1,6 @@
+from datetime import date
+from decimal import Decimal, InvalidOperation
+
 from flask import Blueprint, request, jsonify
 from app import db
 from app.models import Order, OrderItem, Product, Sale, Transaction
@@ -7,6 +10,26 @@ from app.routes.sale_routes import generate_invoice_number
 
 order_bp = Blueprint("orders", __name__, url_prefix="/api/v1/orders")
 
+# Which status changes are allowed. Fulfilled and cancelled are final.
+ALLOWED_TRANSITIONS = {
+    "pending": ["processing", "fulfilled", "cancelled"],
+    "processing": ["fulfilled", "cancelled"],
+    "fulfilled": [],
+    "cancelled": [],
+}
+
+
+def to_money(value, field):
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        raise ValueError(f"{field} must be a number")
+    if not amount.is_finite():
+        raise ValueError(f"{field} must be a number")
+    if amount < 0:
+        raise ValueError(f"{field} cannot be negative")
+    return amount.quantize(Decimal("0.01"))
+
 
 @order_bp.route("", methods=["POST"])
 @jwt_required()
@@ -15,7 +38,7 @@ def create_order():
     user_id = get_jwt_identity()
     role = claims.get("role")
 
-    data = request.get_json()
+    data = request.get_json() or {}
     items = data.get("items")
 
     if not items or not isinstance(items, list) or len(items) == 0:
@@ -23,33 +46,49 @@ def create_order():
 
     order_type = "online" if role == "customer" else "walk-in"
 
-    total_amount = 0
-    validated_items = []
-
+    # Step 1: check the shape of every line and add up quantity per product
+    lines = []
+    requested = {}
     for item in items:
+        if not isinstance(item, dict):
+            return jsonify({"error": "Each item needs a valid product_id and quantity"}), 400
+
         product_id = item.get("product_id")
         quantity = item.get("quantity")
 
-        if not product_id or not quantity or quantity <= 0:
+        if (
+            not isinstance(product_id, int)
+            or isinstance(product_id, bool)
+            or not isinstance(quantity, int)
+            or isinstance(quantity, bool)
+            or quantity <= 0
+        ):
             return jsonify({"error": "Each item needs a valid product_id and quantity"}), 400
 
-        product = Product.query.get(product_id)
+        lines.append((product_id, quantity))
+        requested[product_id] = requested.get(product_id, 0) + quantity
+
+    # Step 2: lock each product row so two orders cannot take the same last item
+    products = {}
+    for product_id in sorted(requested):
+        product = Product.query.filter_by(id=product_id).with_for_update().first()
         if not product:
             return jsonify({"error": f"Product {product_id} not found"}), 404
 
-        if product.stock_qty < quantity:
+        if product.expiry_date and product.expiry_date < date.today():
+            return jsonify({"error": f"'{product.name}' has expired and cannot be ordered"}), 409
+
+        if product.stock_qty < requested[product_id]:
             return jsonify({
-                "error": f"Insufficient stock for '{product.name}'. Available: {product.stock_qty}, requested: {quantity}"
+                "error": f"Insufficient stock for '{product.name}'. Available: {product.stock_qty}, requested: {requested[product_id]}"
             }), 409
 
-        line_total = float(product.price) * quantity
-        total_amount += line_total
+        products[product_id] = product
 
-        validated_items.append({
-            "product": product,
-            "quantity": quantity,
-            "unit_price": product.price
-        })
+    # Step 3: work out the total with exact decimals
+    total_amount = Decimal("0.00")
+    for product_id, quantity in lines:
+        total_amount += Decimal(str(products[product_id].price)) * quantity
 
     new_order = Order(
         user_id=user_id,
@@ -60,16 +99,15 @@ def create_order():
     db.session.add(new_order)
     db.session.flush()
 
-    for entry in validated_items:
-        order_item = OrderItem(
+    for product_id, quantity in lines:
+        product = products[product_id]
+        db.session.add(OrderItem(
             order_id=new_order.id,
-            product_id=entry["product"].id,
-            quantity=entry["quantity"],
-            unit_price=entry["unit_price"]
-        )
-        db.session.add(order_item)
-
-        entry["product"].stock_qty -= entry["quantity"]
+            product_id=product.id,
+            quantity=quantity,
+            unit_price=product.price
+        ))
+        product.stock_qty -= quantity
 
     db.session.commit()
 
@@ -141,18 +179,46 @@ def update_order_status(order_id):
     if not order:
         return jsonify({"error": "Order not found"}), 404
 
-    data = request.get_json()
+    data = request.get_json() or {}
     new_status = data.get("status")
 
     valid_statuses = ["pending", "processing", "fulfilled", "cancelled"]
     if new_status not in valid_statuses:
         return jsonify({"error": f"status must be one of {valid_statuses}"}), 400
 
+    if new_status == order.status:
+        return jsonify({"error": f"Order is already {order.status}"}), 409
+
+    if new_status not in ALLOWED_TRANSITIONS[order.status]:
+        return jsonify({
+            "error": f"An order that is {order.status} cannot be changed to {new_status}"
+        }), 409
+
+    # Check the money fields first, before changing anything
+    tax_amount = Decimal("0.00")
+    discount_amount = Decimal("0.00")
+    final_amount = None
+    if new_status == "fulfilled" and not order.sale:
+        try:
+            tax_amount = to_money(data.get("tax_amount", 0), "tax_amount")
+            discount_amount = to_money(data.get("discount_amount", 0), "discount_amount")
+        except ValueError as err:
+            return jsonify({"error": str(err)}), 400
+
+        final_amount = Decimal(str(order.total_amount)) + tax_amount - discount_amount
+        if final_amount < 0:
+            return jsonify({"error": "discount_amount cannot be more than the order total plus tax"}), 400
+
+    # Cancelling gives the stock back
+    if new_status == "cancelled":
+        for item in sorted(order.items, key=lambda i: i.product_id):
+            product = Product.query.filter_by(id=item.product_id).with_for_update().first()
+            if product:
+                product.stock_qty += item.quantity
+
     order.status = new_status
 
-    if new_status == "fulfilled" and not order.sale:
-        tax_amount = data.get("tax_amount", 0)
-        discount_amount = data.get("discount_amount", 0)
+    if final_amount is not None:
         payment_method = data.get("payment_method", "cash")
 
         new_sale = Sale(
@@ -161,8 +227,6 @@ def update_order_status(order_id):
         )
         db.session.add(new_sale)
         db.session.flush()
-
-        final_amount = float(order.total_amount) + float(tax_amount) - float(discount_amount)
 
         new_transaction = Transaction(
             sale_id=new_sale.id,
