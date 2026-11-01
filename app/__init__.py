@@ -33,12 +33,14 @@ def create_app():
     from app.routes.report_routes import report_bp
     from app.routes.supplier_routes import supplier_bp
     from app.routes.expense_routes import expense_bp
+    from app.routes.user_routes import user_bp
     app.register_blueprint(expense_bp)
     app.register_blueprint(supplier_bp)
     app.register_blueprint(report_bp) 
     app.register_blueprint(sale_bp)
     app.register_blueprint(notification_bp)
     app.register_blueprint(auth_bp)
+    app.register_blueprint(user_bp)
     app.register_blueprint(category_bp)
     app.register_blueprint(product_bp)
     app.register_blueprint(order_bp)
