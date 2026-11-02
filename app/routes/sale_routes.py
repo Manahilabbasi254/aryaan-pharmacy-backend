@@ -11,15 +11,21 @@ sale_bp = Blueprint("sales", __name__, url_prefix="/api/v1/sales")
 @sale_bp.route("", methods=["GET"])
 @require_role("admin", "pharmacist")
 def get_sales():
-    sales = Sale.query.all()
-    return jsonify([{
-        "id": s.id,
-        "order_id": s.order_id,
-        "invoice_number": s.invoice_number,
-        "sale_date": s.sale_date.isoformat(),
-        "total_amount": float(s.order.total_amount)
-    } for s in sales]), 200
-
+    sales = Sale.query.order_by(Sale.sale_date.desc()).all()
+    result = []
+    for s in sales:
+        if s.transaction:
+            amount = float(s.transaction.paid_amount)
+        else:
+            amount = float(s.order.total_amount)
+        result.append({
+            "id": s.id,
+            "order_id": s.order_id,
+            "invoice_number": s.invoice_number,
+            "sale_date": s.sale_date.isoformat(),
+            "total_amount": amount
+        })
+    return jsonify(result), 200
 
 @sale_bp.route("/<int:sale_id>", methods=["GET"])
 @jwt_required()
