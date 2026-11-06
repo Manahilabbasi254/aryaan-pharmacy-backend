@@ -10,6 +10,7 @@ class User(db.Model):
     role = db.Column(db.Enum("customer", "pharmacist", "admin", name="user_role"), nullable=False, default="customer")
     phone = db.Column(db.String(20))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
 
 
 class Category(db.Model):

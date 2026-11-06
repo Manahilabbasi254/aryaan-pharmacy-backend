@@ -17,6 +17,7 @@ def user_to_dict(u):
         "email": u.email,
         "role": u.role,
         "phone": u.phone,
+        "is_active": bool(u.is_active),
         "created_at": u.created_at.isoformat() if u.created_at else None,
     }
 
@@ -84,16 +85,25 @@ def change_role(user_id):
     return jsonify({"message": "Role updated", "user": user_to_dict(user)}), 200
 
 
+@user_bp.route("/<int:user_id>/active", methods=["PUT"])
+@require_role("admin")
+def set_active(user_id):
+    data = request.get_json() or {}
+    value = data.get("is_active")
 
+    if not isinstance(value, bool):
+        return jsonify({"error": "is_active must be true or false"}), 400
 
+    user = db.session.get(User, user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    if str(user.id) == str(get_jwt_identity()):
+        return jsonify({"error": "You cannot deactivate your own account"}), 400
 
+    user.is_active = value
+    db.session.commit()
 
-
-
-
-
-
-
-
-
-
+    return jsonify({
+        "message": "User activated" if value else "User deactivated",
+        "user": user_to_dict(user)
+    }), 200

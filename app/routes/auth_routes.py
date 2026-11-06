@@ -9,7 +9,7 @@ auth_bp = Blueprint("auth", __name__, url_prefix="/api/v1/auth")
 
 @auth_bp.route("/register", methods=["POST"])
 def register():
-    data = request.get_json()
+    data = request.get_json() or {}
 
     name = data.get("name")
     email = data.get("email")
@@ -43,7 +43,7 @@ def register():
 
 @auth_bp.route("/login", methods=["POST"])
 def login():
-    data = request.get_json()
+    data = request.get_json() or {}
 
     email = data.get("email")
     password = data.get("password")
@@ -55,6 +55,9 @@ def login():
 
     if not user or not bcrypt.checkpw(password.encode("utf-8"), user.password_hash.encode("utf-8")):
         return jsonify({"error": "Invalid email or password"}), 401
+
+    if not user.is_active:
+        return jsonify({"error": "This account has been deactivated. Please contact the pharmacy admin."}), 403
 
     access_token = create_access_token(
         identity=str(user.id),
