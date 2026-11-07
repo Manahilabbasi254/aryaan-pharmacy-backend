@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, jsonify
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager
@@ -22,21 +22,34 @@ def create_app():
     db.init_app(app)
     jwt.init_app(app)
 
+    # Reject tokens of users who were deactivated or deleted
+    @jwt.token_in_blocklist_loader
+    def reject_inactive_users(jwt_header, jwt_payload):
+        from app.models import User
+        try:
+            user = db.session.get(User, int(jwt_payload["sub"]))
+        except (KeyError, TypeError, ValueError):
+            return True
+        return user is None or not user.is_active
+
+    @jwt.revoked_token_loader
+    def revoked_token_response(jwt_header, jwt_payload):
+        return jsonify({"msg": "Your account is no longer active. Please log in again."}), 401
+
     from app.routes.auth_routes import auth_bp
     from app.routes.category_routes import category_bp
     from app.routes.product_routes import product_bp
     from app.routes.order_routes import order_bp
     from app.routes.notification_routes import notification_bp
-
     from app.routes.sale_routes import sale_bp
-# ... with your other blueprint imports
     from app.routes.report_routes import report_bp
     from app.routes.supplier_routes import supplier_bp
     from app.routes.expense_routes import expense_bp
     from app.routes.user_routes import user_bp
+
     app.register_blueprint(expense_bp)
     app.register_blueprint(supplier_bp)
-    app.register_blueprint(report_bp) 
+    app.register_blueprint(report_bp)
     app.register_blueprint(sale_bp)
     app.register_blueprint(notification_bp)
     app.register_blueprint(auth_bp)

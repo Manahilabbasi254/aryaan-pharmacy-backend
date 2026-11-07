@@ -152,7 +152,7 @@ def get_order(order_id):
     if not order:
         return jsonify({"error": "Order not found"}), 404
 
-    if role not in ("admin", "pharmacist") and str(order.user_id) != user_id:
+    if role not in ("admin", "pharmacist") and str(order.user_id) != str(user_id):
         return jsonify({"error": "You do not have permission to view this order"}), 403
 
     items = [{
@@ -168,14 +168,47 @@ def get_order(order_id):
         "status": order.status,
         "total_amount": float(order.total_amount),
         "created_at": order.created_at.isoformat(),
+        "invoice_number": order.sale.invoice_number if order.sale else None,
+        "paid_amount": float(order.sale.transaction.paid_amount) if order.sale and order.sale.transaction else None,
         "items": items
     }), 200
+
+
+@order_bp.route("/<int:order_id>/cancel", methods=["PUT"])
+@jwt_required()
+def cancel_order(order_id):
+    claims = get_jwt()
+    user_id = get_jwt_identity()
+    role = claims.get("role")
+
+    # Lock the order row so two cancel requests cannot both restore the stock
+    order = Order.query.filter_by(id=order_id).with_for_update().first()
+    if not order:
+        return jsonify({"error": "Order not found"}), 404
+
+    if role not in ("admin", "pharmacist") and str(order.user_id) != str(user_id):
+        return jsonify({"error": "You do not have permission to cancel this order"}), 403
+
+    if order.status != "pending":
+        return jsonify({
+            "error": f"Only a pending order can be cancelled. This order is {order.status}."
+        }), 409
+
+    for item in sorted(order.items, key=lambda i: i.product_id):
+        product = Product.query.filter_by(id=item.product_id).with_for_update().first()
+        if product:
+            product.stock_qty += item.quantity
+
+    order.status = "cancelled"
+    db.session.commit()
+
+    return jsonify({"message": "Order cancelled", "id": order.id, "status": order.status}), 200
 
 
 @order_bp.route("/<int:order_id>/status", methods=["PUT"])
 @require_role("admin", "pharmacist")
 def update_order_status(order_id):
-    order = Order.query.get(order_id)
+    order = Order.query.filter_by(id=order_id).with_for_update().first()
     if not order:
         return jsonify({"error": "Order not found"}), 404
 
