@@ -1,10 +1,18 @@
+import re
+
 from flask import Blueprint, request, jsonify
 from app import db
 from app.models import User
-from flask_jwt_extended import create_access_token, jwt_required, get_jwt
+from flask_jwt_extended import create_access_token, jwt_required, get_jwt, get_jwt_identity
 import bcrypt
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/v1/auth")
+
+PHONE_PATTERN = re.compile(r"^[0-9+\-\s()]{7,20}$")
+
+
+def user_payload(u):
+    return {"id": u.id, "name": u.name, "email": u.email, "role": u.role, "phone": u.phone}
 
 
 @auth_bp.route("/register", methods=["POST"])
@@ -80,3 +88,63 @@ def me():
         "role": claims.get("role"),
         "name": claims.get("name")
     }), 200
+
+
+@auth_bp.route("/profile", methods=["GET"])
+@jwt_required()
+def get_profile():
+    user = db.session.get(User, int(get_jwt_identity()))
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    return jsonify(user_payload(user)), 200
+
+
+@auth_bp.route("/profile", methods=["PUT"])
+@jwt_required()
+def update_profile():
+    user = db.session.get(User, int(get_jwt_identity()))
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    phone = (data.get("phone") or "").strip()
+
+    if len(name) < 2 or len(name) > 100:
+        return jsonify({"error": "Name must be between 2 and 100 characters"}), 400
+    if phone and not PHONE_PATTERN.match(phone):
+        return jsonify({"error": "Enter a valid phone number (digits, +, - and spaces only)"}), 400
+
+    user.name = name
+    user.phone = phone or None
+    db.session.commit()
+
+    return jsonify({"message": "Profile updated", "user": user_payload(user)}), 200
+
+
+@auth_bp.route("/password", methods=["PUT"])
+@jwt_required()
+def change_password():
+    user = db.session.get(User, int(get_jwt_identity()))
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    data = request.get_json(silent=True) or {}
+    current_password = data.get("current_password") or ""
+    new_password = data.get("new_password") or ""
+
+    # 400 (not 401) on purpose: the frontend logs the user out on any 401
+    if not bcrypt.checkpw(current_password.encode("utf-8"), user.password_hash.encode("utf-8")):
+        return jsonify({"error": "Current password is incorrect"}), 400
+    if len(new_password) < 6:
+        return jsonify({"error": "New password must be at least 6 characters"}), 400
+    if len(new_password.encode("utf-8")) > 72:
+        return jsonify({"error": "New password is too long (maximum 72 characters)"}), 400
+    if new_password == current_password:
+        return jsonify({"error": "New password must be different from the current one"}), 400
+
+    hashed = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt())
+    user.password_hash = hashed.decode("utf-8")
+    db.session.commit()
+
+    return jsonify({"message": "Password changed"}), 200
