@@ -5,6 +5,7 @@ from flask import Blueprint, request, jsonify
 from sqlalchemy.exc import IntegrityError
 
 from app import db
+from app.alerts import sync_alerts
 from app.models import Product, Category
 from app.utils import require_role
 
@@ -122,6 +123,7 @@ def create_product():
     )
     db.session.add(new_product)
     db.session.commit()
+    sync_alerts()
 
     return jsonify({"id": new_product.id, "name": new_product.name, "stock_qty": new_product.stock_qty}), 201
 
@@ -142,7 +144,9 @@ def update_product(product_id):
         setattr(product, key, value)
 
     db.session.commit()
-    return jsonify({"message": "Product updated", "id": product.id}), 200
+    sync_alerts()
+
+    return jsonify({"message": "Product updated", "id": product_id}), 200
 
 
 @product_bp.route("/<int:product_id>", methods=["DELETE"])
@@ -162,4 +166,5 @@ def delete_product(product_id):
                      "Set its stock to 0 instead."
         }), 409
 
+    sync_alerts()
     return jsonify({"message": "Product deleted"}), 200
