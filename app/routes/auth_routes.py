@@ -3,12 +3,14 @@ import re
 from flask import Blueprint, request, jsonify
 from app import db
 from app.models import User
+from app.rate_limit import seconds_until_allowed, record_failure, clear_failures
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt, get_jwt_identity
 import bcrypt
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/v1/auth")
 
 PHONE_PATTERN = re.compile(r"^[0-9+\-\s()]{7,20}$")
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def user_payload(u):
@@ -17,15 +19,24 @@ def user_payload(u):
 
 @auth_bp.route("/register", methods=["POST"])
 def register():
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
 
-    name = data.get("name")
-    email = data.get("email")
-    password = data.get("password")
+    name = (data.get("name") or "").strip()
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
     role = "customer"
 
     if not name or not email or not password:
         return jsonify({"error": "name, email, and password are required"}), 400
+
+    if len(name) < 2 or len(name) > 100:
+        return jsonify({"error": "Name must be between 2 and 100 characters"}), 400
+    if len(email) > 120 or not EMAIL_PATTERN.match(email):
+        return jsonify({"error": "Enter a valid email address"}), 400
+    if len(password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters"}), 400
+    if len(password.encode("utf-8")) > 72:
+        return jsonify({"error": "Password is too long (maximum 72 characters)"}), 400
 
     existing_user = User.query.filter_by(email=email).first()
     if existing_user:
@@ -51,21 +62,34 @@ def register():
 
 @auth_bp.route("/login", methods=["POST"])
 def login():
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
 
-    email = data.get("email")
-    password = data.get("password")
+    email = (data.get("email") or "").strip()
+    password = data.get("password") or ""
 
     if not email or not password:
         return jsonify({"error": "email and password are required"}), 400
 
+    ip = request.remote_addr or "unknown"
+
+    # 429 (not 401) on purpose: the frontend logs the user out on any 401
+    wait = seconds_until_allowed(ip, email)
+    if wait > 0:
+        minutes = max(1, (wait + 59) // 60)
+        return jsonify({
+            "error": f"Too many failed attempts. Please try again in {minutes} minute(s)."
+        }), 429
+
     user = User.query.filter_by(email=email).first()
 
     if not user or not bcrypt.checkpw(password.encode("utf-8"), user.password_hash.encode("utf-8")):
+        record_failure(ip, email)
         return jsonify({"error": "Invalid email or password"}), 401
 
     if not user.is_active:
         return jsonify({"error": "This account has been deactivated. Please contact the pharmacy admin."}), 403
+
+    clear_failures(ip, email)
 
     access_token = create_access_token(
         identity=str(user.id),

@@ -1,4 +1,7 @@
 venv/
 .env
+.env.*
 __pycache__/
-*.pycpip list
+*.pyc
+*.sql
+instance/

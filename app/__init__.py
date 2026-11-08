@@ -1,3 +1,4 @@
+from datetime import timedelta
 from flask import Flask, jsonify
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
@@ -12,12 +13,22 @@ jwt = JWTManager()
 
 def create_app():
     app = Flask(__name__)
-    CORS(app, origins=["http://localhost:3000", "http://127.0.0.1:3000"])
+
+    # Allowed website addresses. For production, set FRONTEND_ORIGINS in .env
+    # (comma separated), e.g. FRONTEND_ORIGINS=https://www.aryaanpharmacy.org.pk
+    origins = os.getenv("FRONTEND_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+    CORS(app, origins=[o.strip() for o in origins.split(",") if o.strip()])
+
+    secret_key = os.getenv("SECRET_KEY")
+    jwt_secret_key = os.getenv("JWT_SECRET_KEY")
+    if not secret_key or not jwt_secret_key:
+        raise RuntimeError("SECRET_KEY and JWT_SECRET_KEY must be set in the .env file")
 
     app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL")
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-    app.config["SECRET_KEY"] = os.getenv("SECRET_KEY")
-    app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY")
+    app.config["SECRET_KEY"] = secret_key
+    app.config["JWT_SECRET_KEY"] = jwt_secret_key
+    app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=8)
 
     db.init_app(app)
     jwt.init_app(app)
