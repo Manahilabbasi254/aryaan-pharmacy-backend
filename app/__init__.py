@@ -1,5 +1,5 @@
 from datetime import timedelta
-from flask import Flask, jsonify
+from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager
@@ -29,6 +29,11 @@ def create_app():
     app.config["SECRET_KEY"] = secret_key
     app.config["JWT_SECRET_KEY"] = jwt_secret_key
     app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=8)
+
+    # Product image uploads (max 3 MB request, files kept in the "uploads" folder)
+    app.config["MAX_CONTENT_LENGTH"] = 3 * 1024 * 1024
+    app.config["UPLOAD_FOLDER"] = os.path.abspath(os.path.join(app.root_path, os.pardir, "uploads"))
+    os.makedirs(os.path.join(app.config["UPLOAD_FOLDER"], "products"), exist_ok=True)
 
     db.init_app(app)
     jwt.init_app(app)
@@ -68,6 +73,10 @@ def create_app():
     app.register_blueprint(category_bp)
     app.register_blueprint(product_bp)
     app.register_blueprint(order_bp)
+
+    @app.route("/uploads/<path:filename>")
+    def serve_upload(filename):
+        return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
     @app.route("/api/v1/ping")
     def ping():

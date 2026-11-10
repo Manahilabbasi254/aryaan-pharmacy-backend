@@ -28,6 +28,7 @@ class Product(db.Model):
     stock_qty = db.Column(db.Integer, nullable=False, default=0)
     expiry_date = db.Column(db.Date)
     description = db.Column(db.Text)
+    image_url = db.Column(db.String(255))
 
     category = db.relationship("Category", backref="products")
 
